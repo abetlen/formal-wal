@@ -29,7 +29,7 @@ pub struct WalIterator<'a> {
 }
 
 impl Wal {
-    pub fn open(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+    pub fn open(path: impl AsRef<std::path::Path>) -> io::Result<Self> {
         let ok = AtomicBool::new(true);
         let mut file = std::fs::OpenOptions::new()
             .create(true)
@@ -126,7 +126,7 @@ impl Wal {
         self.ok.load(Ordering::SeqCst)
     }
 
-    pub fn write(&self, data: &[u8]) -> Result<u64, std::io::Error> {
+    pub fn write(&self, data: &[u8]) -> io::Result<u64> {
         let length = data.len() as u64;
         let mut hasher = crc32fast::Hasher::new();
         hasher.update(&length.to_le_bytes());
@@ -172,7 +172,7 @@ impl Wal {
         Ok(index)
     }
 
-    pub fn sync(&self, index: u64) -> Result<u64, std::io::Error> {
+    pub fn sync(&self, index: u64) -> io::Result<u64> {
         let _lock = self.sync_lock.lock().unwrap();
         if index < self.durable.load(Ordering::SeqCst) {
             return Ok(index);
@@ -188,13 +188,13 @@ impl Wal {
         Ok(index)
     }
 
-    pub fn append(&self, data: &[u8]) -> Result<u64, std::io::Error> {
+    pub fn append(&self, data: &[u8]) -> io::Result<u64> {
         let index = self.write(data)?;
         self.sync(index)?;
         Ok(index)
     }
 
-    pub fn read(&self, index: u64) -> Result<Vec<u8>, std::io::Error> {
+    pub fn read(&self, index: u64) -> io::Result<Vec<u8>> {
         let index = usize::try_from(index)
             .map_err(|_| io::Error::new(io::ErrorKind::InvalidInput, "index too large"))?;
         let (offset, expected_length) = {
