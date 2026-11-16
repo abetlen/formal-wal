@@ -6,8 +6,12 @@ license = "MIT"
 
 [dependencies]
 crc32fast = "1.5.5"
+shuttle = { version = "0.9.10", optional = true }
 
 [dev-dependencies]
 rand = "0.10"
 proptest = "1.12.0"
 tempfile = "3.27.0"
+
+[features]
+shuttle = ["dep:shuttle"]
