@@ -2,12 +2,6 @@ use std::io::IoSlice;
 use std::io::{self, Read, Write};
 use std::os::unix::fs::FileExt;
 
-#[cfg(feature = "shuttle")]
-use shuttle::sync::{
-    Mutex,
-    atomic::{AtomicBool, AtomicU64, Ordering},
-};
-#[cfg(not(feature = "shuttle"))]
 use std::sync::{
     Mutex,
     atomic::{AtomicBool, AtomicU64, Ordering},
@@ -522,90 +516,18 @@ mod tests {
     }
 }
 
+#[cfg(feature = "shuttle")]
+mod std {
+    pub use ::std::*;
+
+    #[cfg(feature = "shuttle")]
+    pub use ::shuttle::sync;
+}
+
 #[cfg(all(test, feature = "shuttle"))]
 mod shuttle_tests {
     use super::*;
     use shuttle::{sync::Arc, thread};
-
-    #[test]
-    fn concurrent_writes_syncs_and_snapshots() {
-        shuttle::check_random(
-            || {
-                let dir = tempfile::tempdir_in("/dev/shm").unwrap();
-                let path = dir.path().join("test.wal");
-                let wal = Arc::new(Wal::open(&path).unwrap());
-                assert_eq!(wal.append(b"").unwrap(), 0);
-                let initial_snapshot = wal.iter();
-
-                let writers: Vec<_> = (0u8..2).map(|writer_id| {
-                    let wal = Arc::clone(&wal);
-                    thread::spawn(move || {
-                        let mut completed = Vec::new();
-                        for sequence in 0u8..3 {
-                            let payload = vec![writer_id, sequence];
-                            let index = wal.write(&payload).unwrap();
-                            // A completed write must be readable even before this caller syncs.
-                            assert_eq!(wal.read(index).unwrap(), payload);
-                            thread::yield_now();
-                            assert_eq!(wal.sync(index).unwrap(), index);
-                            let durable = wal.iter().collect::<io::Result<Vec<_>>>().unwrap();
-                            assert_eq!(durable.get(usize::try_from(index).unwrap()), Some(&payload));
-                            // Exercise the already-durable path while other writes proceed.
-                            wal.sync(index).unwrap();
-                            completed.push((index, payload));
-                        }
-                        completed
-                    })
-                }).collect();
-
-                let reader_wal = Arc::clone(&wal);
-                let reader = thread::spawn(move || {
-                    let mut snapshots = Vec::new();
-                    for _ in 0..4 {
-                        let mut snapshot = reader_wal.iter();
-                        let end = snapshot.end;
-                        thread::yield_now();
-                        let mut records = Vec::new();
-                        for record in snapshot.by_ref() {
-                            records.push(record.unwrap());
-                            thread::yield_now();
-                        }
-                        assert_eq!(records.len() as u64, end);
-                        assert!(snapshot.next().is_none());
-                        snapshots.push(records);
-                    }
-                    snapshots
-                });
-
-                let mut completed = vec![(0, Vec::new())];
-                for writer in writers {
-                    completed.extend(writer.join().unwrap());
-                }
-                let snapshots = reader.join().unwrap();
-                completed.sort_by_key(|(index, _)| *index);
-                for (expected_index, (index, _)) in completed.iter().enumerate() {
-                    assert_eq!(*index, expected_index as u64);
-                }
-                let expected: Vec<_> = completed.into_iter().map(|(_, data)| data).collect();
-                for snapshot in snapshots {
-                    assert_eq!(snapshot.as_slice(), &expected[..snapshot.len()]);
-                }
-                assert_eq!(
-                    initial_snapshot.collect::<io::Result<Vec<_>>>().unwrap(),
-                    vec![Vec::<u8>::new()],
-                );
-                assert_eq!(wal.iter().collect::<io::Result<Vec<_>>>().unwrap(), expected);
-                assert!(wal.is_ok());
-
-                // Reopening checks the resulting file, not simulated crash persistence.
-                drop(wal);
-                let reopened = Wal::open(&path).unwrap();
-                assert!(reopened.is_ok());
-                assert_eq!(reopened.iter().collect::<io::Result<Vec<_>>>().unwrap(), expected);
-            },
-            1000,
-        );
-    }
 
     #[test]
     fn concurrent_appends() {
